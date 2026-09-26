@@ -107,9 +107,26 @@ const EN = {
   back: "Back",
 
   onboard_title: "Welcome to ACAT CyberGuard",
-  onboard_sub: "What should we call you? This stays on this device for now — no account or phone number needed yet.",
+  onboard_sub: "What should we call you?",
   onboard_placeholder: "Your name",
   onboard_cta: "Continue",
+
+  auth_title: "Sign in to ACAT CyberGuard",
+  auth_sub: "Enter your email. We'll send you a sign-in link and a 6-digit code — this keeps your reports and evidence tied to your account so you can come back to them later.",
+  auth_email_placeholder: "you@example.com",
+  auth_send_code: "Send code",
+  auth_sending: "Sending…",
+  auth_invalid_email: "Enter a valid email address.",
+  auth_send_failed: "Couldn't send the email. Check the address and try again.",
+  auth_check_email_title: "Check your email",
+  auth_check_email_sub: "We sent a link and a 6-digit code to",
+  auth_check_email_hint: "Click the link in that email, or enter the code below.",
+  auth_code_placeholder: "6-digit code",
+  auth_verify: "Verify & continue",
+  auth_verifying: "Verifying…",
+  auth_code_invalid: "That code didn't work. Check it and try again.",
+  auth_use_different_email: "Use a different email",
+  auth_resend_code: "Resend code",
 
   type_scam: "Scam / fraud", type_phishing: "Phishing",
   type_account: "Account compromise", type_harassment: "Harassment",
@@ -414,17 +431,6 @@ function mapAlertRow(row) {
   };
 }
 
-/* Ensures a signed-in Supabase user before any RLS-guarded call. Uses
-   anonymous sign-in (Auth > Providers > Anonymous must be enabled in the
-   Supabase dashboard) so the app works without phone/email OTP for now;
-   swapping in real phone/email auth later only touches this function. */
-async function ensureSession() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) return session;
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error) throw error;
-  return data.session;
-}
 async function currentUserId() {
   const { data: { user } } = await supabase.auth.getUser();
   return user?.id || null;
@@ -695,6 +701,43 @@ function BottomNav({ active, onChange, t }) {
   );
 }
 
+/* Desktop-width companion to BottomNav — same tab keys/behaviour (including
+   the "report" key launching Emergency Capture instead of switching tabs),
+   just laid out as a persistent left rail instead of a bottom bar so wide
+   screens read as a website, not a stretched phone screen. */
+function SidebarNav({ active, onChange, t }) {
+  const items = [
+    { key: "home", label: t("nav_home"), icon: Home },
+    { key: "alerts", label: t("nav_alerts"), icon: FileWarning },
+    { key: "report", label: t("nav_report"), icon: Siren, emphasized: true },
+    { key: "evidence", label: t("nav_evidence"), icon: FolderLock },
+    { key: "reports", label: t("nav_reports"), icon: ClipboardList },
+  ];
+  return (
+    <nav className="hidden md:flex md:flex-col md:w-60 md:shrink-0 md:h-screen md:sticky md:top-0 acg-surface acg-border-b md:border-b-0 md:border-r px-3 py-6 gap-1">
+      <div className="flex items-center gap-2 px-2 mb-6">
+        <Shield size={22} className="acg-accent-text" />
+        <span className="font-semibold text-sm">{t("appName")}</span>
+      </div>
+      {items.map((it) => {
+        const Icon = it.icon;
+        const isActive = active === it.key;
+        return (
+          <button key={it.key} onClick={() => onChange(it.key)}
+            className="acg-focus flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left"
+            style={{
+              background: it.emphasized ? "var(--acg-primary)" : isActive ? "var(--acg-surface-2)" : "transparent",
+              color: it.emphasized ? "#F4F7F5" : isActive ? "var(--acg-accent)" : "var(--acg-text-muted)",
+            }}>
+            <Icon size={18} />
+            {it.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 function ComingSoonModal({ open, onClose, body, t }) {
   if (!open) return null;
   return (
@@ -860,10 +903,133 @@ function GuidesScreen({ t, guides, openId, onOpen }) {
 }
 
 /* ---------- Onboarding (lightweight local identity, ahead of real auth) - */
+/* ---------- Email sign-in (replaces anonymous-only auth) -----------------
+   Step 1: collect email, ask Supabase to send a magic link + OTP code.
+   Step 2: user either clicks the emailed link (session picked up
+   automatically via supabase-js's onAuthStateChange listener in the root
+   component) or types the 6-digit code here, which calls verifyOtp directly.
+   Requires the Email provider enabled in Supabase Auth (on by default). */
+function EmailAuthScreen({ t }) {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [stage, setStage] = useState("email"); // 'email' | 'code'
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
+  const sendCode = async () => {
+    if (!isValidEmail(email)) { setError(t("auth_invalid_email")); return; }
+    setBusy(true); setError(null);
+    try {
+      const { error: err } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { shouldCreateUser: true },
+      });
+      if (err) throw err;
+      setStage("code");
+    } catch (e) {
+      console.error(e);
+      setError(t("auth_send_failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    if (!code.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const { error: err } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: code.trim(),
+        type: "email",
+      });
+      if (err) throw err;
+      // On success, supabase-js updates the session and the root
+      // component's onAuthStateChange listener takes it from here.
+    } catch (e) {
+      console.error(e);
+      setError(t("auth_code_invalid"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="acg-root min-h-screen flex flex-col justify-center px-6 py-10 mx-auto w-full max-w-sm" style={{ minHeight: 640 }}>
+      <style>{TOKENS}</style>
+      <Shield size={36} className="acg-accent-text mb-4" />
+
+      {stage === "email" ? (
+        <>
+          <h1 className="text-xl font-semibold mb-2">{t("auth_title")}</h1>
+          <p className="acg-muted text-sm leading-relaxed mb-6">{t("auth_sub")}</p>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendCode()}
+            placeholder={t("auth_email_placeholder")}
+            autoComplete="email"
+            className="acg-surface acg-focus rounded-xl px-4 py-3 text-sm mb-3"
+            style={{ color: "var(--acg-text)" }}
+          />
+          {error && <p className="acg-danger-text text-xs mb-3">{error}</p>}
+          <button
+            disabled={!email.trim() || busy}
+            onClick={sendCode}
+            className="acg-focus w-full rounded-xl py-3 font-semibold flex items-center justify-center gap-2"
+            style={{ background: email.trim() && !busy ? "var(--acg-primary)" : "var(--acg-border)", color: "var(--acg-text)", opacity: email.trim() && !busy ? 1 : 0.6 }}
+          >
+            {busy && <Loader2 size={16} className="acg-spin" />}
+            {busy ? t("auth_sending") : t("auth_send_code")}
+          </button>
+        </>
+      ) : (
+        <>
+          <h1 className="text-xl font-semibold mb-2">{t("auth_check_email_title")}</h1>
+          <p className="acg-muted text-sm leading-relaxed mb-1">
+            {t("auth_check_email_sub")} <span style={{ color: "var(--acg-text)" }}>{email.trim()}</span>
+          </p>
+          <p className="acg-muted text-sm leading-relaxed mb-6">{t("auth_check_email_hint")}</p>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            onKeyDown={(e) => e.key === "Enter" && verify()}
+            placeholder={t("auth_code_placeholder")}
+            inputMode="numeric"
+            className="acg-surface acg-focus rounded-xl px-4 py-3 text-sm mb-3 tracking-widest text-center"
+            style={{ color: "var(--acg-text)" }}
+          />
+          {error && <p className="acg-danger-text text-xs mb-3">{error}</p>}
+          <button
+            disabled={!code.trim() || busy}
+            onClick={verify}
+            className="acg-focus w-full rounded-xl py-3 font-semibold flex items-center justify-center gap-2 mb-3"
+            style={{ background: code.trim() && !busy ? "var(--acg-primary)" : "var(--acg-border)", color: "var(--acg-text)", opacity: code.trim() && !busy ? 1 : 0.6 }}
+          >
+            {busy && <Loader2 size={16} className="acg-spin" />}
+            {busy ? t("auth_verifying") : t("auth_verify")}
+          </button>
+          <div className="flex items-center justify-between text-xs">
+            <button onClick={() => { setStage("email"); setCode(""); setError(null); }} className="acg-focus acg-muted underline underline-offset-2">
+              {t("auth_use_different_email")}
+            </button>
+            <button onClick={sendCode} disabled={busy} className="acg-focus acg-accent-text underline underline-offset-2">
+              {t("auth_resend_code")}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function OnboardingScreen({ t, onSubmit }) {
   const [name, setName] = useState("");
   return (
-    <div className="acg-root min-h-full flex flex-col justify-center px-6 py-10" style={{ minHeight: 640 }}>
+    <div className="acg-root min-h-screen flex flex-col justify-center px-6 py-10 mx-auto w-full max-w-sm" style={{ minHeight: 640 }}>
       <style>{TOKENS}</style>
       <Shield size={36} className="acg-accent-text mb-4" />
       <h1 className="text-xl font-semibold mb-2">{t("onboard_title")}</h1>
@@ -1549,7 +1715,7 @@ function StaffShell({ t, incidents, onExit, onOpen }) {
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
-    <div className="acg-root min-h-full w-full max-w-md mx-auto relative" style={{ minHeight: 640 }}>
+    <div className="acg-root min-h-full w-full max-w-md md:max-w-2xl mx-auto relative" style={{ minHeight: 640 }}>
       <style>{TOKENS}</style>
       <div className="acg-surface acg-border-b flex items-center gap-2 px-4 py-3 sticky top-0 z-10">
         <Shield size={20} className="acg-accent-text" />
@@ -1598,7 +1764,7 @@ function StaffIncidentDetail({ t, incident, onBack, onStartReview, onSendGuidanc
   };
 
   return (
-    <div className="acg-root min-h-full w-full max-w-md mx-auto relative" style={{ minHeight: 640 }}>
+    <div className="acg-root min-h-full w-full max-w-md md:max-w-2xl mx-auto relative" style={{ minHeight: 640 }}>
       <style>{TOKENS}</style>
       <div className="acg-surface acg-border-b flex items-center gap-2 px-4 py-3 sticky top-0 z-10">
         <button onClick={onBack} aria-label="Back" className="acg-tap acg-focus flex items-center justify-center -ml-2"><ChevronLeft size={22} /></button>
@@ -1688,6 +1854,7 @@ export default function ACATCyberGuard() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [role, setRole] = useState("user");
   const [staffIncidentId, setStaffIncidentId] = useState(null);
+  const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
   const t = useT(lang);
 
   useEffect(() => {
@@ -1698,10 +1865,21 @@ export default function ACATCyberGuard() {
 
   const refreshIncidents = useCallback(async () => setIncidents(await api.getIncidents()), []);
 
+  // Real email sign-in (magic link + OTP) replaces the old anonymous-only
+  // auth. This just tracks the current session; the actual sign-in UI is
+  // EmailAuthScreen, and clicking the emailed link or entering the code
+  // both end up here via Supabase's own auth-state event.
   useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => { if (active) setSession(data.session ?? null); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => { active = false; sub.subscription.unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
     (async () => {
       try {
-        await ensureSession(); // anonymous sign-in — enable it in Supabase Auth settings
         setAlerts(await api.getAlerts());
         setGuides(await api.getGuides());
         setLang(await api.getPref("lang", "en"));
@@ -1709,11 +1887,11 @@ export default function ACATCyberGuard() {
         setProfileState(await api.getProfile());
         await refreshIncidents();
       } catch (err) {
-        console.error("Startup failed — check Supabase URL/anon key and that Anonymous sign-ins is enabled.", err);
+        console.error("Startup failed — check Supabase URL/anon key.", err);
         setEvidenceError(t("startup_failed"));
       }
     })();
-  }, [refreshIncidents]);
+  }, [session, refreshIncidents]);
 
   const changeLang = async (code) => { setLang(code); await api.setPref("lang", code); };
   const toggleNotif = async (v) => { setNotifOn(v); await api.setPref("notifOn", v); };
@@ -1929,26 +2107,35 @@ export default function ACATCyberGuard() {
     body = <EvidenceLockerHome t={t} incidents={incidents} onOpen={(id) => { setShowAddPanel(false); push({ type: "evidenceLockerDetail", id }); }} />;
   }
 
+  if (session === undefined) return null; // brief load, avoids auth-screen flash
+  if (session === null) return <EmailAuthScreen t={t} />;
   if (profile === undefined) return null; // brief load, avoids onboarding flash
   if (profile === null) return <OnboardingScreen t={t} onSubmit={completeOnboarding} />;
 
   return (
-    <div className="acg-root min-h-full w-full max-w-md mx-auto relative" style={{ minHeight: 640 }}>
+    <div className="acg-root min-h-full w-full relative md:flex" style={{ minHeight: 640 }}>
       <style>{TOKENS}</style>
-      <TopBar
-        title={title}
-        onBack={stack.length ? pop : null}
-        right={!stack.length && tab === "home" ? (
-          <button onClick={() => push({ type: "settings" })} aria-label={t("settings_title")} className="acg-tap acg-focus flex items-center justify-center rounded-lg">
-            <Bell size={20} color={notifOn ? "var(--acg-accent)" : "var(--acg-text-muted)"} />
-          </button>
-        ) : null}
-      />
-      <div className="pb-24">{body}</div>
-      <BottomNav active={tab} onChange={changeTab} t={t} />
+      <SidebarNav active={tab} onChange={changeTab} t={t} />
+      <div className="w-full md:flex-1 md:min-w-0">
+        <div className="w-full max-w-md md:max-w-3xl mx-auto md:px-6">
+          <TopBar
+            title={title}
+            onBack={stack.length ? pop : null}
+            right={!stack.length && tab === "home" ? (
+              <button onClick={() => push({ type: "settings" })} aria-label={t("settings_title")} className="acg-tap acg-focus flex items-center justify-center rounded-lg">
+                <Bell size={20} color={notifOn ? "var(--acg-accent)" : "var(--acg-text-muted)"} />
+              </button>
+            ) : null}
+          />
+          <div className="pb-24 md:pb-10">{body}</div>
+        </div>
+      </div>
+      <div className="md:hidden">
+        <BottomNav active={tab} onChange={changeTab} t={t} />
+      </div>
       <ComingSoonModal open={!!comingSoon} body={comingSoon} onClose={() => setComingSoon(null)} t={t} />
       {evidenceError && (
-        <div className="fixed left-4 right-4 z-40 rounded-xl px-4 py-3 text-sm max-w-md mx-auto" style={{ bottom: 84, background: "var(--acg-danger)", color: "#fff" }}>
+        <div className="fixed left-4 right-4 md:left-auto md:right-8 z-40 rounded-xl px-4 py-3 text-sm max-w-md md:w-96 mx-auto md:mx-0" style={{ bottom: 84, background: "var(--acg-danger)", color: "#fff" }}>
           {evidenceError}
         </div>
       )}

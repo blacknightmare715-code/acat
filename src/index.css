@@ -7,4 +7,8 @@ html, body, #root {
 }
 body {
   margin: 0;
+  /* Matches --acg-bg from the app's design tokens — set here (not via the
+     CSS var) so there's no flash of white behind the centered card on wide
+     screens before React mounts, or on the sides of any narrower screen. */
+  background: #07110F;
 }

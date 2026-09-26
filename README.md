@@ -20,17 +20,28 @@ If you haven't already:
 3. Then run **`storage_policies.sql`** (creates the private `evidence` bucket + its access rules).
 4. Then run **`seed.sql`** (adds the sample alerts/guides so the app isn't empty).
 
-## 3. Enable Anonymous sign-ins (replaces phone OTP for now)
+## 3. Email sign-in
 
-Since phone OTP setup is being skipped for now, the app signs people in with
-Supabase's **anonymous auth** — they get a real, persistent account with no
-phone number or email needed. You must turn this on manually:
+The app signs people in with a real email address — Supabase's **Email OTP**
+flow (`signInWithOtp` / `verifyOtp` in `src/App.jsx`). A person enters their
+email, gets a message with a sign-in link *and* a 6-digit code, and either
+clicking the link or typing the code signs them in for real — no anonymous
+accounts, no phone number needed.
 
-**Dashboard → Authentication → Sign In / Providers → Anonymous Sign-Ins → Enable**
+The **Email** provider is on by default in every Supabase project, so
+there's usually nothing to enable here. Two things worth checking:
 
-Without this, the app will fail on load with a "Couldn't connect" toast.
-When you're ready for real phone OTP later, only `ensureSession()` in
-`src/App.jsx` needs to change — the rest of the app is unaffected.
+- **Dashboard → Authentication → Sign In / Providers → Email** should be
+  enabled (it is by default).
+- **Dashboard → Authentication → Email Templates → Magic Link** — Supabase's
+  default template already includes `{{ .Token }}`, which is what makes the
+  6-digit code option work. If you've customized this template, make sure
+  `{{ .Token }}` (or `{{ .ConfirmationURL }}`) is still in it.
+
+On Supabase's free tier, outgoing email is rate-limited and uses Supabase's
+own sender — fine for testing with a handful of real ACAT volunteers, but
+plan to connect your own SMTP provider (Dashboard → Authentication → SMTP
+Settings) before opening this up publicly.
 
 ## 4. Add your Supabase credentials
 
@@ -49,9 +60,11 @@ project.
 npm run dev
 ```
 
-Open the printed localhost URL. The onboarding screen should appear (asks
-for a name) — if instead you see a red "Couldn't connect" toast at the
-bottom, double check step 3 and step 4.
+Open the printed localhost URL. You should see the email sign-in screen —
+enter an email you can check, then either click the link in the email or
+type the 6-digit code it sends. After that, the onboarding screen (asks for
+a name) should appear. If instead you see a red "Couldn't connect" toast,
+double check step 3 and step 4.
 
 ## 6. Testing the Staff view
 
@@ -85,10 +98,8 @@ accounts (not anonymous ones) exist.
 
 - **Malware scanning** — files upload and hash correctly, but nothing scans
   them yet. Needs a Supabase Edge Function calling ClamAV or VirusTotal.
-- **Phone/email OTP** — anonymous auth works but doesn't identify a real
-  person. Needed before this can be trusted with real incident reports at
-  scale (also required for DLT-compliant SMS in India if you go the phone
-  OTP route later).
+- **Phone OTP** — sign-in is email-based for now (see step 3). Phone/SMS
+  OTP is DLT-compliance work specific to India and hasn't been built.
 - **Push notifications** — the bell icon toggles a local preference only;
   no actual notification is ever sent.
 - **Real staff accounts** — right now "staff" is just any Supabase user
