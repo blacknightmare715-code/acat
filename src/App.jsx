@@ -467,6 +467,17 @@ function makeDataProvider() {
       const { error } = await supabase.from("profiles").upsert({ id: userId, name: profile.name });
       if (error) throw error;
     },
+    // Whether the signed-in user is on the ACAT team — true only if a row
+    // for them exists in staff_roles, which is added manually from the
+    // Supabase Dashboard (see README step 6). This is what gates the Staff
+    // view link in Settings; anyone else never sees the option at all.
+    async isStaff() {
+      const userId = await currentUserId();
+      if (!userId) return false;
+      const { data, error } = await supabase.from("staff_roles").select("role").eq("user_id", userId).maybeSingle();
+      if (error) { console.error(error); return false; }
+      return !!data;
+    },
 
     async getIncidents() {
       const { data, error } = await supabase
@@ -1655,7 +1666,7 @@ function ToggleSwitch({ on, onChange }) {
   );
 }
 
-function SettingsScreen({ t, lang, onChangeLang, notifOn, onToggleNotif, onNavigate, onEnterStaffView }) {
+function SettingsScreen({ t, lang, onChangeLang, notifOn, onToggleNotif, onNavigate, isStaff, onEnterStaffView }) {
   return (
     <div className="px-4 py-4 space-y-4">
       <div className="acg-surface rounded-2xl p-4">
@@ -1691,13 +1702,15 @@ function SettingsScreen({ t, lang, onChangeLang, notifOn, onToggleNotif, onNavig
         </button>
       </div>
 
-      <div className="acg-surface rounded-2xl p-4">
-        <button onClick={onEnterStaffView} className="acg-focus w-full flex items-center justify-between">
-          <span className="text-sm font-medium flex items-center gap-2"><ClipboardList size={16} className="acg-accent-text" />{t("settings_staff_link")}</span>
-          <ChevronRight size={16} className="acg-muted" />
-        </button>
-        <p className="text-xs acg-muted mt-2 leading-relaxed">{t("settings_staff_note")}</p>
-      </div>
+      {isStaff && (
+        <div className="acg-surface rounded-2xl p-4">
+          <button onClick={onEnterStaffView} className="acg-focus w-full flex items-center justify-between">
+            <span className="text-sm font-medium flex items-center gap-2"><ClipboardList size={16} className="acg-accent-text" />{t("settings_staff_link")}</span>
+            <ChevronRight size={16} className="acg-muted" />
+          </button>
+          <p className="text-xs acg-muted mt-2 leading-relaxed">{t("settings_staff_note")}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1855,6 +1868,7 @@ export default function ACATCyberGuard() {
   const [role, setRole] = useState("user");
   const [staffIncidentId, setStaffIncidentId] = useState(null);
   const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
+  const [isStaff, setIsStaff] = useState(false);
   const t = useT(lang);
 
   useEffect(() => {
@@ -1885,6 +1899,7 @@ export default function ACATCyberGuard() {
         setLang(await api.getPref("lang", "en"));
         setNotifOn(await api.getPref("notifOn", true));
         setProfileState(await api.getProfile());
+        setIsStaff(await api.isStaff());
         await refreshIncidents();
       } catch (err) {
         console.error("Startup failed — check Supabase URL/anon key.", err);
@@ -2002,7 +2017,7 @@ export default function ACATCyberGuard() {
   const staffCloseCase = (id, message) => staffAction(async () => { if (message) await api.addGuidance(id, message); await api.setStatus(id, "closed"); });
   const staffArchive = (id) => staffAction(() => api.setStatus(id, "archived"));
 
-  if (role === "staff") {
+  if (role === "staff" && isStaff) {
     const staffIncident = incidents.find((i) => i.id === staffIncidentId);
     return staffIncidentId ? (
       <StaffIncidentDetail t={t} incident={staffIncident}
@@ -2032,7 +2047,7 @@ export default function ACATCyberGuard() {
   } else if (top?.type === "settings") {
     title = t("settings_title");
     body = <SettingsScreen t={t} lang={lang} onChangeLang={changeLang} notifOn={notifOn} onToggleNotif={toggleNotif}
-      onNavigate={(dest) => push({ type: dest })} onEnterStaffView={() => setRole("staff")} />;
+      onNavigate={(dest) => push({ type: dest })} isStaff={isStaff} onEnterStaffView={() => isStaff && setRole("staff")} />;
   } else if (top?.type === "privacy") {
     title = t("privacy_title");
     body = <PrivacyScreen t={t} notifOn={notifOn} onToggleNotif={toggleNotif} />;

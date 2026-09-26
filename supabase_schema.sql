@@ -130,8 +130,10 @@ create policy "profiles_select_own" on profiles for select using (id = auth.uid(
 create policy "profiles_update_own" on profiles for update using (id = auth.uid());
 create policy "profiles_insert_own" on profiles for insert with check (id = auth.uid());
 
--- staff_roles: nobody can read/write via the client; manage from the Dashboard only.
--- (No policies = no access for anon/authenticated roles; service_role bypasses RLS.)
+-- staff_roles: nobody can write via the client; manage from the Dashboard
+-- only. Select is limited to a user's own row, so the app can ask "am I
+-- staff?" without being able to read who else is on the team.
+create policy "staff_roles_select_own" on staff_roles for select using (user_id = auth.uid());
 
 -- incidents: owners see/manage their own; staff see and update all
 create policy "incidents_select_own_or_staff" on incidents

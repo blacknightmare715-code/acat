@@ -68,21 +68,30 @@ double check step 3 and step 4.
 
 ## 6. Testing the Staff view
 
-Settings → "Staff view (demo)" opens the reviewer console, but every staff
-action (start review, send guidance, close case, etc.) is protected by Row
-Level Security — it will only work for a Supabase user listed in the
-`staff_roles` table. To test it as yourself:
+The "Staff view" link in Settings is only visible to accounts listed in the
+`staff_roles` table — everyone else never sees it at all, and even if
+someone forced it open, every staff action (start review, send guidance,
+close case, etc.) is separately protected by Row Level Security. To test it
+as yourself:
 
-1. Open the app once (so your anonymous user gets created).
-2. In Supabase Dashboard → Authentication → Users, find your user (it'll be
-   the most recent one, no email/phone shown since it's anonymous) and copy
-   its UUID.
+1. Sign in to the app with the email you'll use for testing.
+2. In Supabase Dashboard → Authentication → Users, find that user by their
+   email and copy their UUID.
 3. In Table Editor → `staff_roles`, insert a row: `user_id` = that UUID,
    `role` = `staff`.
-4. Reload the app — staff actions should now succeed.
+4. Reload the app — the "Staff view" link should now appear in Settings.
 
-Real ACAT team members would each need their own row here once real staff
-accounts (not anonymous ones) exist.
+If you deployed this project before this feature was added, re-run this one
+line from `supabase_schema.sql` in the SQL Editor (it's a small addition
+that lets a user check their own staff status, nothing else):
+
+```sql
+create policy "staff_roles_select_own" on staff_roles for select using (user_id = auth.uid());
+```
+
+Real ACAT team members would each need their own row here — added by
+whoever administers the Supabase project, by their email's UUID. There's no
+admin panel for this yet — it's a manual Dashboard step per person.
 
 ## 7. Deploy
 
